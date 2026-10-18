@@ -1,0 +1,12 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.pem
+*.ovpn
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+**/*.ovpn
+**/*.pem
+tfplan
+.DS_Store
