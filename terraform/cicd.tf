@@ -112,7 +112,8 @@ resource "aws_iam_user_policy" "github" {
           "ecr:CompleteLayerUpload",
           "ecr:PutImage",
           "ecr:BatchGetImage",
-          "ecr:DescribeImages" # push öncesi "bu tag zaten var mı?" kontrolü (IMMUTABLE)
+          "ecr:DescribeImages",           # push öncesi "bu tag zaten var mı?" kontrolü (IMMUTABLE)
+          "ecr:DescribeImageScanFindings" # deploy öncesi tarama kapısı (CRITICAL varsa dur)
         ]
         Resource = aws_ecr_repository.app.arn
       },

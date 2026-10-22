@@ -73,6 +73,23 @@ jobs:
           echo "İmaj: $REGISTRY/$ECR_REPOSITORY@$DIGEST (tag: $SHORT)"
           echo "IMAGE_DIGEST=$DIGEST" >> "$GITHUB_ENV"
 
+      - name: Güvenlik taraması kapısı (CRITICAL varsa deploy yok)
+        run: |
+          # scan_on_push açık. Taramanın bitmesini bekle (5 sn arayla en fazla ~5 dk).
+          # Tarama FAILED/UNSUPPORTED olursa waiter hata verir ve deploy yapılmaz (fail-closed).
+          aws ecr wait image-scan-complete --repository-name "$ECR_REPOSITORY" \
+            --image-id imageDigest="$IMAGE_DIGEST"
+          COUNTS=$(aws ecr describe-image-scan-findings --repository-name "$ECR_REPOSITORY" \
+            --image-id imageDigest="$IMAGE_DIGEST" \
+            --query 'imageScanFindings.findingSeverityCounts' --output json)
+          echo "Tarama sonucu (önem seviyesine göre): $COUNTS"
+          CRITICAL=$(echo "$COUNTS" | jq -r '.CRITICAL // 0')
+          if [ "$CRITICAL" -gt 0 ]; then
+            echo "HATA: İmajda $CRITICAL CRITICAL açık var, deploy yapılmıyor."
+            exit 1
+          fi
+          echo "CRITICAL açık yok, deploy'a geçiliyor."
+
       - name: Private sunucuya SSM ile deploy et (+ sağlık kontrolü)
         env:
           AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
