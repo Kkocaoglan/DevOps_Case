@@ -102,6 +102,12 @@ resource "aws_instance" "vpn" {
   user_data                   = local.vpn_user_data
   user_data_replace_on_change = true
 
+  # Yeni Ubuntu AMI çıkınca VPN sunucusu kendiliğinden yeniden oluşturulmasın
+  # (yoksa public IP değişir ve herkesin .ovpn dosyası bozulur)
+  lifecycle {
+    ignore_changes = [ami]
+  }
+
   tags = { Name = "case1-vpn" }
 }
 

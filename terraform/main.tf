@@ -21,6 +21,13 @@ terraform {
 
 provider "aws" {
   region = "eu-north-1"
+
+  default_tags {
+    tags = {
+      Project   = "case1"
+      ManagedBy = "terraform"
+    }
+  }
 }
 
 resource "aws_vpc" "main" {

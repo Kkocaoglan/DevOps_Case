@@ -1,0 +1,43 @@
+flowchart LR
+    dev["Geliştirici laptopu<br/>OpenVPN client<br/>tünel IP: 10.8.0.x"]
+    net(("İnternet"))
+    gh["GitHub Actions<br/>main branch push"]
+
+    subgraph aws["AWS hesabı - eu-north-1"]
+        iam["IAM kullanıcısı<br/>access key<br/>en az yetki"]
+        ecr["ECR<br/>case1-app<br/>scan on push"]
+        ssm["Systems Manager<br/>Run Command"]
+
+        subgraph vpc["VPC 10.0.0.0/16"]
+            igw["Internet Gateway"]
+
+            subgraph pub["Public subnet 10.0.1.0/24"]
+                vpn["EC2 t3.micro: OpenVPN<br/>SG: sadece UDP 1194<br/>SSH internete kapalı"]
+                nat["NAT Gateway<br/>+ Elastic IP"]
+            end
+
+            subgraph priv["Private subnet 10.0.2.0/24"]
+                app["EC2 t3.micro: Docker + Nginx<br/>public IP yok<br/>SG: sadece VPN SG'den 22, 80, ICMP"]
+            end
+        end
+    end
+
+    dev -- "1 - UDP 1194<br/>şifreli tünel, mTLS + tls-crypt" --> net
+    net --> igw
+    igw --> vpn
+    vpn -- "2 - MASQUERADE<br/>HTTP 80 / SSH 22" --> app
+    app -- "3 - sadece dışarı çıkış<br/>apt, docker pull" --> nat
+    nat --> igw
+
+    gh -- "a - access key<br/>GitHub Secrets" --> iam
+    gh -- "b - docker push" --> ecr
+    gh -- "c - send-command" --> ssm
+    ssm -. "d - agent NAT üzerinden<br/>dışarıya bağlanır" .- app
+    app -. "e - docker pull" .-> ecr
+
+    classDef public fill:#fff4e5,stroke:#e8a33d,color:#222
+    classDef private fill:#e8f5e9,stroke:#43a047,color:#222
+    classDef ext fill:#eef2ff,stroke:#5c6bc0,color:#222
+    class vpn,nat public
+    class app private
+    class dev,gh,net ext

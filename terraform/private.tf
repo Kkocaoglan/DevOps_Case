@@ -76,6 +76,11 @@ until apt-get update; do sleep 5; done
 apt-get install -y docker.io
 systemctl enable --now docker
 
+# AWS CLI: CI/CD'de ECR'a login olmak için
+snap install aws-cli --classic
+ln -sf /snap/bin/aws /usr/local/bin/aws
+
+# İlk açılışta geçici sayfa (CI/CD ilk deploy'da bunu ECR imajıyla değiştirecek)
 mkdir -p /opt/site
 cat > /opt/site/index.html <<'EOF'
 <!doctype html>
@@ -101,11 +106,17 @@ resource "aws_instance" "app" {
   subnet_id              = aws_subnet.private.id
   vpc_security_group_ids = [aws_security_group.app.id]
   key_name               = aws_key_pair.case1.key_name
+  iam_instance_profile   = aws_iam_instance_profile.app.name
 
   user_data                   = local.app_user_data
   user_data_replace_on_change = true
 
   depends_on = [aws_route_table_association.private]
+
+  # Yeni Ubuntu AMI çıkınca makine kendiliğinden yeniden oluşturulmasın
+  lifecycle {
+    ignore_changes = [ami]
+  }
 
   tags = { Name = "case1-app" }
 }

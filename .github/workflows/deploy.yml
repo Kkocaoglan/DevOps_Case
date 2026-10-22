@@ -1,0 +1,60 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "scripts/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch: # Actions sekmesinden elle çalıştırmak için
+
+# Repoya sadece okuma yetkisi
+permissions:
+  contents: read
+
+# Aynı anda iki deploy çalışmasın; yenisi gelirse eskisi beklesin
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-north-1
+  ECR_REPOSITORY: case1-app
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Sadece main branch'inden deploy (elle tetiklemede de)
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Kodu çek
+        uses: actions/checkout@v4
+
+      - name: AWS'ye giriş yap (GitHub Secrets'taki access key ile)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: ECR'a login ol
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: İmajı build et ve ECR'a push et
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TAG: ${{ github.sha }}
+        run: |
+          SHORT="${TAG:0:7}"
+          sed -i "s/__VERSION__/$SHORT/" app/index.html
+          docker build -t "$REGISTRY/$ECR_REPOSITORY:$SHORT" app
+          docker push "$REGISTRY/$ECR_REPOSITORY:$SHORT"
+          echo "IMAGE=$REGISTRY/$ECR_REPOSITORY:$SHORT" >> "$GITHUB_ENV"
+
+      - name: Private sunucuya SSM ile deploy et (+ sağlık kontrolü)
+        env:
+          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
+        run: bash scripts/deploy.sh "$IMAGE"
