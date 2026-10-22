@@ -154,8 +154,12 @@ GitHub Actions (production environment) → access key → docker build → ECR 
 Kurulum adımları: [docs/CICD.md](docs/CICD.md)
 
 ## Doğrulama
-- `docs/screenshots/vpn-on.png`: VPN açıkken uygulama açılıyor.
-- `docs/screenshots/vpn-off.png`: VPN kapalıyken uygulama açılmıyor.
+- `docs/screenshots/vpn-on.png`: VPN bağlıyken (OpenVPN Connect: "Securely Connected") uygulama private IP'den (`http://10.0.2.x`) açılıyor.
+
+  ![VPN açık](docs/screenshots/vpn-on.png)
+- `docs/screenshots/vpn-off.png`: VPN kapalıyken aynı adrese bağlantı zaman aşımına uğruyor (`curl: (28) Connection timed out`, `exit=28`).
+
+  ![VPN kapalı](docs/screenshots/vpn-off.png)
 - `docs/screenshots/actions.png`: Başarılı bir CI/CD çalışması.
 - `docs/screenshots/deployed.png`: Deploy edilen versiyon.
 - `docs/screenshots/leaked-key-tests.png`: Sızan CI anahtarıyla yetki testleri (S10c/S10d/S10e): keyfi komut `AccessDenied`, geçersiz digest `InvalidParameters`.
