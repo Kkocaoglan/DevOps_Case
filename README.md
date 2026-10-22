@@ -15,32 +15,48 @@ Bütün altyapı **Terraform** ile tanımlı. Tek bir `terraform apply` ile VPN 
 
 ```mermaid
 flowchart LR
-    dev["Geliştirici laptopu<br/>OpenVPN client"]
+    dev["Geliştirici laptopu<br/>OpenVPN client<br/>tünel IP: 10.8.0.x"]
     net(("İnternet"))
-    gh["GitHub Actions"]
-    subgraph aws["AWS eu-north-1"]
-        iam["IAM kullanıcısı<br/>dar yetki"]
-        ecr["ECR"]
-        ssm["SSM Run Command"]
+    gh["GitHub Actions<br/>main + production environment"]
+
+    subgraph aws["AWS hesabı - eu-north-1"]
+        iam["IAM kullanıcısı<br/>access key<br/>en az yetki"]
+        ecr["ECR<br/>case1-app<br/>scan on push"]
+        ssm["Systems Manager<br/>Run Command<br/>sadece case1-deploy-app"]
+
         subgraph vpc["VPC 10.0.0.0/16"]
             igw["Internet Gateway"]
+
             subgraph pub["Public subnet 10.0.1.0/24"]
-                vpn["EC2 OpenVPN<br/>SG: sadece UDP 1194"]
-                nat["NAT Gateway"]
+                vpn["EC2 t3.micro: OpenVPN<br/>SG: sadece UDP 1194<br/>iptables FORWARD: varsayılan DROP<br/>IMDSv2, hop limit 1"]
+                nat["NAT Gateway<br/>+ Elastic IP"]
             end
+
             subgraph priv["Private subnet 10.0.2.0/24"]
-                app["EC2 Docker + Nginx<br/>public IP yok"]
+                app["EC2 t3.micro: Docker + Nginx<br/>public IP yok<br/>SG: sadece VPN SG'den 22, 80, ICMP<br/>IMDSv2, hop limit 1"]
             end
         end
     end
-    dev -- "UDP 1194 tünel" --> net --> igw --> vpn
-    vpn -- "HTTP 80 / SSH 22" --> app
-    app -- "sadece çıkış" --> nat --> igw
-    gh -- "access key (GitHub Secrets)" --> iam
-    gh -- "docker push" --> ecr
-    gh -- "send-command<br/>(sadece case1-deploy-app)" --> ssm
-    ssm -.- app
-    app -.-> ecr
+
+    dev -- "1 - UDP 1194<br/>şifreli tünel, mTLS + tls-crypt" --> net
+    net --> igw
+    igw --> vpn
+    vpn -- "2 - iptables: sadece 10.0.2.0/24<br/>TCP 22, 80 ve ICMP<br/>MASQUERADE" --> app
+    app -- "3 - sadece dışarı çıkış<br/>apt, docker pull, SSM" --> nat
+    nat --> igw
+
+    gh -- "a - access key<br/>environment secret" --> iam
+    gh -- "b - docker push" --> ecr
+    gh -- "c - send-command<br/>ImageDigest=sha256:..." --> ssm
+    ssm -. "d - agent NAT üzerinden<br/>dışarıya bağlanır" .- app
+    app -. "e - docker pull<br/>digest ile" .-> ecr
+
+    classDef public fill:#fff4e5,stroke:#e8a33d,color:#222
+    classDef private fill:#e8f5e9,stroke:#43a047,color:#222
+    classDef ext fill:#eef2ff,stroke:#5c6bc0,color:#222
+    class vpn,nat public
+    class app private
+    class dev,gh,net ext
 ```
 </details>
 
@@ -160,8 +176,6 @@ Kurulum adımları: [docs/CICD.md](docs/CICD.md)
 - `docs/screenshots/vpn-off.png`: VPN kapalıyken aynı adrese bağlantı zaman aşımına uğruyor (`curl: (28) Connection timed out`, `exit=28`).
 
   ![VPN kapalı](docs/screenshots/vpn-off.png)
-- `docs/screenshots/actions.png`: Başarılı bir CI/CD çalışması.
-- `docs/screenshots/deployed.png`: Deploy edilen versiyon.
 - `docs/screenshots/leaked-key-tests.png`: Sızan CI anahtarıyla yetki testleri (S10c/S10d/S10e): keyfi komut `AccessDenied`, geçersiz digest `InvalidParameters`.
 
 ## Maliyet (yaklaşık)
