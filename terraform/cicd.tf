@@ -56,7 +56,7 @@ resource "aws_iam_instance_profile" "app" {
 resource "aws_iam_user" "github" {
   name          = "case1-github-actions"
   path          = "/ci/"
-  force_destroy = true # destroy'da üstündeki access key ile birlikte silinsin
+  force_destroy = false # login profile silme denemesi SCP ile yasak; access key zaten ayrı kaynak olarak siliniyor
 }
 
 # En az yetki: sadece deploy için gerekenler
