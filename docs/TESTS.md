@@ -13,6 +13,7 @@ VPN_PRIV=$(terraform output -raw vpn_private_ip)
 APP_IP=$(terraform output -raw app_private_ip)
 APP_ID=$(terraform output -raw app_instance_id)
 ```
+Komutlar macOS için yazıldı. macOS'taki `nc`'de bağlantı zaman aşımı `-G` ile verilir (`-w` cevap gelmeyen bağlantıda beklemeyi kesmez); Linux'ta `-G` yerine `-w` kullan.
 
 ---
 
@@ -179,10 +180,13 @@ APP_ID=$(terraform output -raw app_instance_id)
 - **Sorun:** `nginx:alpine` master süreci container içinde root olarak çalışıyor. Container kaçışı gerektiren bir açıkta etki daha büyük olur.
 - **Çözüm:** `nginxinc/nginx-unprivileged` (8080'i dinler, root değil) kullan, port eşlemesini `-p 80:8080` yap. Ek olarak `--read-only`, `--cap-drop ALL`, `--security-opt no-new-privileges`.
 
-### 🟠 B23: Branch protection ve environment koruması eksikti
+### ✅ B23: Branch protection ve environment koruması eksikti (bu sürümde düzeltildi)
 - **Sorun:** `main`'e doğrudan push ve force-push açıktı. AWS secret'ları repo seviyesindeydi; repo'ya yazma yetkisi olan biri secret'ları okuyan bir workflow ekleyebilirdi.
-- **Kısmen düzeltildi:** Deploy job'u `environment: production`'a bağlandı.
-- **Elle yapılması gereken (GitHub ayarı):** `main` için PR zorunluluğu ve force-push yasağı; `production` environment'ında deployment branch kuralı (sadece `main`), istenirse required reviewer; secret'ların repo secret'tan environment secret'a taşınması. Adımlar: CICD.md, 3. ve 4. adım.
+- **Çözüm (uygulandı):**
+  - Deploy job'u `environment: production`'a bağlandı. Environment'ın deployment branch kuralı sadece `main`; AWS secret'ları environment secret olarak tutuluyor.
+  - `main` için ruleset: PR zorunlu (tek geliştirici olduğu için onay sayısı 0), force-push ve silme engelli.
+- **Kanıt (2026-10-22):** `main`'e direkt `git push` reddedildi: `GH013: Repository rule violations found ... Changes must be made through a pull request.`
+- **Not:** Required reviewer tanımlı değil. Ekip büyürse deploy öncesi onay için `production` environment'ına reviewer eklenmeli.
 
 ### 🟡 B24: GitHub Actions eylemleri tag ile sabitlenmiş
 - **Sorun:** `actions/checkout@v4`, `aws-actions/configure-aws-credentials@v4`, `aws-actions/amazon-ecr-login@v2` tag ile çağrılıyor. Tag'ler taşınabilir; eylemin deposu ele geçirilirse kötü amaçlı kod, AWS anahtarlarına erişimi olan job'da çalışır.
@@ -227,8 +231,8 @@ Her testin bir **beklenen sonucu** var. Sonuç beklenenden farklıysa bir bulgu 
   ```bash
   NAT_IP=$(aws ec2 describe-nat-gateways --filter Name=tag:Name,Values=case1-nat \
     --query "NatGateways[0].NatGatewayAddresses[0].PublicIp" --output text)
-  nc -vz -w 5 $NAT_IP 80
-  nc -vz -w 5 $NAT_IP 22
+  nc -vz -G 5 $NAT_IP 80
+  nc -vz -G 5 $NAT_IP 22
   ```
   Beklenen: İkisi de zaman aşımı. NAT gelen bağlantı kabul etmiyor.
 
@@ -246,9 +250,9 @@ Her testin bir **beklenen sonucu** var. Sonuç beklenenden farklıysa bir bulgu 
 
 - **S5. VPN içinden izin verilmeyen portlar:**
   ```bash
-  nc -vz -w 3 $APP_IP 80     # başarılı olmalı
-  nc -vz -w 3 $APP_IP 8080   # zaman aşımı olmalı (SG izin vermiyor)
-  nc -vz -w 3 $APP_IP 443    # zaman aşımı olmalı
+  nc -vz -G 3 $APP_IP 80     # başarılı olmalı
+  nc -vz -G 3 $APP_IP 8080   # zaman aşımı olmalı (SG izin vermiyor)
+  nc -vz -G 3 $APP_IP 443    # zaman aşımı olmalı
   ```
 
 - **S6. Uygulama sunucusunun public IP'si yok:**
@@ -325,15 +329,17 @@ Her testin bir **beklenen sonucu** var. Sonuç beklenenden farklıysa bir bulgu 
   ```
   Beklenen: İkisi de `InvalidParameters` hatası vermeli, komut sunucuya hiç gönderilmemeli. İkinci deneme, digest'in arkasına komut eklemenin (enjeksiyon) regex'e takıldığını gösteriyor.
 
+  **Sonuç (2026-10-22):** S10c, S10d ve S10e beklendiği gibi: S3/EC2/ECR `AccessDenied`, `AWS-RunShellScript` `AccessDeniedException`, geçersiz ve enjeksiyonlu digest `InvalidParameters`. Kanıt: [`screenshots/leaked-key-tests.png`](screenshots/leaked-key-tests.png) (hesap numarası maskeli).
+
 - **S10b. OIDC yasağının kanıtı (README'deki tasarım kararının gerekçesi):**
   ```bash
   aws iam list-open-id-connect-providers
   ```
   - Beklenen: Listeleme bile `explicit deny in a service control policy` hatası verebilir ya da boş dönebilir. Bu hesapta identity provider kullanılamadığının kanıtı. README'deki tasarım değişikliğinin gerekçesi bu.
 
-- **S12. VPN client'ından VPN sunucusunun IMDS'ine ulaşma (B17'nin kanıtı):** VPN bağlıyken macOS'ta. Önce tünel arayüzünü bul (`10.0/16` route'unun gittiği `utunX`):
+- **S12. VPN client'ından VPN sunucusunun IMDS'ine ulaşma (B17'nin kanıtı):** VPN bağlıyken macOS'ta. Önce tünel arayüzünü bul (macOS `10.0.0.0/16` route'unu `10/16` olarak gösteriyor, son sütun `utunX`):
   ```bash
-  netstat -rn -f inet | grep '^10.0/16'
+  netstat -rn -f inet | grep utun
   sudo route -n add -host 169.254.169.254 -interface utunX
   curl -s -m 5 -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 60" http://169.254.169.254/latest/api/token; echo "exit=$?"
   sudo route -n delete -host 169.254.169.254
@@ -342,18 +348,22 @@ Her testin bir **beklenen sonucu** var. Sonuç beklenenden farklıysa bir bulgu 
   - Düzeltmeden önce: Bir token dönebiliyordu; o token ile `http://169.254.169.254/latest/user-data` okunup sunucu private key'i alınabiliyordu.
   - Route'u silmeyi unutma.
 
+  **Sonuç (2026-10-22):** `utun6` üzerinden PUT isteği 5 sn'de zaman aşımına uğradı (`exit=28`), token dönmedi. Geçti.
+
 - **S13. VPN FORWARD kuralları:**
   ```bash
   ssh -i ~/.ssh/case1 ubuntu@$VPN_PRIV "sudo iptables -S FORWARD"
-  nc -vz -w 3 $APP_IP 80          # başarılı olmalı
+  nc -vz -G 3 $APP_IP 80          # başarılı olmalı
   ping -c 2 $APP_IP               # cevap vermeli
   ssh -i ~/.ssh/case1 ubuntu@$VPN_PRIV true && echo "VPN sunucusuna SSH OK"   # INPUT etkilenmemeli
   # İzin verilmeyen hedef: public subnet. DROP politikasının sayacı artmalı.
   ssh -i ~/.ssh/case1 ubuntu@$VPN_PRIV "sudo iptables -L FORWARD -v -n | head -1"
-  nc -vz -w 3 10.0.1.10 80        # zaman aşımı
+  nc -vz -G 3 10.0.1.10 80        # zaman aşımı (macOS'ta bağlantı süresi -G ile sınırlanır, -w yetmez)
   ssh -i ~/.ssh/case1 ubuntu@$VPN_PRIV "sudo iptables -L FORWARD -v -n | head -1"
   ```
   Beklenen: `iptables -S` çıktısında `-P FORWARD DROP`, `169.254.0.0/16 ... DROP` ve sadece private subnet için 22/80/ICMP `ACCEPT` kuralları olmalı. `Chain FORWARD (policy DROP N packets ...)` satırındaki paket sayısı `nc` denemesinden sonra artmalı, yani paket VPN sunucusunda düşürülmüş olmalı. R1'den (reboot) sonra da aynı kurallar gelmeli.
+
+  **Sonuç (2026-10-22):** Kurallar beklendiği gibi (`-P FORWARD DROP`, 169.254/16 DROP, sadece `10.0.2.0/24` için 22/80/ICMP; çıkış arayüzü `ens5`, dinamik bulunuyor). `$APP_IP:80` ve ping başarılı. Public subnet denemesinden sonra DROP politikası sayacı 0 → 10 paket. Geçti.
 
 - **S11. Statik analiz:**
   ```bash
@@ -435,7 +445,7 @@ Her testin bir **beklenen sonucu** var. Sonuç beklenenden farklıysa bir bulgu 
 1. **Hemen ve ucuz:**
    - ~~IMDS hop limit 1 (B4)~~ ✅
    - ~~Özel SSM deploy dokümanı, digest ile deploy (B16)~~ ✅
-   - Branch protection + `production` environment ayarları (B23, GitHub'da elle)
+   - ~~Branch protection + `production` environment ayarları (B23)~~ ✅
    - EBS şifreleme (B5)
    - VPN için Elastic IP (B10)
    - `source_dest_check = true` (B11)
