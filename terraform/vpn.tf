@@ -99,6 +99,15 @@ resource "aws_instance" "vpn" {
   key_name               = aws_key_pair.case1.key_name
   source_dest_check      = false
 
+  # IMDSv2 zorunlu, hop limit 1: metadata cevabı sadece bu makinedeki süreçlere ulaşır.
+  # Bir hop daha ötesi (Docker bridge'deki container'lar, VPN tünelinden gelen
+  # client'lar) token alamaz, rolün geçici anahtarlarına erişemez.
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+  }
+
   user_data                   = local.vpn_user_data
   user_data_replace_on_change = true
 
