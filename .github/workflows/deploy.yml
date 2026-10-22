@@ -24,7 +24,8 @@ env:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    # ubuntu-latest Ubuntu 26'ya geçiyor; sürpriz olmasın diye sabit sürüm
+    runs-on: ubuntu-24.04
     # Sadece main branch'inden deploy (elle tetiklemede de)
     if: github.ref == 'refs/heads/main'
     # AWS secret'ları "production" environment'ında; environment'ın deployment
@@ -33,10 +34,10 @@ jobs:
 
     steps:
       - name: Kodu çek
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: AWS'ye giriş yap (GitHub Secrets'taki access key ile)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
