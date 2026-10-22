@@ -279,14 +279,20 @@ Her testin bir **beklenen sonucu** var. Sonuç beklenenden farklıysa bir bulgu 
 
 - **S9. Container'dan IAM kimlik bilgisi çalma (B4'ün kanıtı):** Uygulama sunucusunda (SSH ile):
   ```bash
-  TOKEN=$(sudo docker run --rm curlimages/curl -s -X PUT \
-    -H "X-aws-ec2-metadata-token-ttl-seconds: 60" http://169.254.169.254/latest/api/token)
-  sudo docker run --rm curlimages/curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
-    http://169.254.169.254/latest/meta-data/iam/security-credentials/
+  sudo docker run --rm curlimages/curl -s -m 5 -X PUT \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 60" http://169.254.169.254/latest/api/token; echo "exit=$?"
   ```
-  - Beklenen (B4 düzeltmesinden sonra): İlk komut boş dönmeli (token cevabı container'a ulaşmıyor), ikinci komut `401` / boş dönmeli.
-  - Düzeltmeden önceki durum: Rol adı (`case1-app-ec2-role`) dönüyordu, yani bir container rolün geçici anahtarlarına ulaşabiliyordu.
-  - Karşı kontrol, host'un kendisi hâlâ erişebilmeli: `TOKEN=$(curl -s -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 60" http://169.254.169.254/latest/api/token) && curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/` rol adını dönmeli.
+  - Beklenen (B4 düzeltmesinden sonra): Token dönmemeli, `exit=28` (zaman aşımı). Token cevabı hop limit 1 yüzünden container'a ulaşmıyor.
+  - Düzeltmeden önceki durum: Token dönüyordu ve onunla `.../iam/security-credentials/` çağrılınca rol adı (`case1-app-ec2-role`) geliyordu; yani bir container rolün geçici anahtarlarına ulaşabiliyordu.
+  - Karşı kontrol, host'un kendisi hâlâ erişebilmeli (SSM agent ve deploy dokümanındaki `aws` CLI için gerekli):
+    ```bash
+    TOKEN=$(curl -s -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 60" http://169.254.169.254/latest/api/token) && \
+      curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/; echo
+    ```
+    Rol adını (`case1-app-ec2-role`) dönmeli.
+  - Temizlik: `sudo docker rmi curlimages/curl`
+
+  **Sonuç (2026-10-22):** Container içinden `exit=28`, token yok. Host'tan `case1-app-ec2-role`. Geçti.
 
 - **S10. Başka bir branch'ten deploy denemesi:**
   ```bash
