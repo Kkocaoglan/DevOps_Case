@@ -161,6 +161,10 @@ resource "aws_iam_user_policy" "github" {
 # lokalde hazır, rollback ECR'a ve NAT'a bağlı kalmadan saniyeler içinde biter.
 # Temizlik sadece sağlık kontrolü geçtikten sonra yapılıyor.
 #
+# Port: imaj nginx-unprivileged tabanlı ve 8080'i dinliyor, sunucuda 80 → 8080.
+# Bu değişiklikten önceki imajlar 80'i dinliyordu; onlara bu dokümanla rollback
+# yapılırsa sağlık kontrolü başarısız olur (sadece bu geçişten sonraki imajlara dönülebilir).
+#
 # Not: Komutlarda "{{ }}" sadece SSM parametresi için kullanılıyor; docker'ın
 # Go template'leri (--format '{{...}}') SSM sözdizimiyle çakışacağı için bilerek yok.
 data "aws_region" "current" {}
@@ -196,7 +200,7 @@ resource "aws_ssm_document" "deploy" {
               aws ecr get-login-password --region ${data.aws_region.current.region} | docker login --username AWS --password-stdin ${local.ecr_registry}
               docker pull ${local.ecr_image}
               docker rm -f web || true
-              docker run -d --name web --restart unless-stopped -p 80:80 ${local.ecr_image}
+              docker run -d --name web --restart unless-stopped -p 80:8080 ${local.ecr_image}
               sleep 3
               # Ayri satir: basarisiz olursa set -e script'i burada durdurur ("curl && echo" durdurmazdi)
               curl -fsS -o /dev/null --retry 5 --retry-connrefused --retry-delay 2 http://localhost
