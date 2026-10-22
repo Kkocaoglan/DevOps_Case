@@ -38,14 +38,42 @@ resource "aws_iam_role" "app" {
   })
 }
 
+# SSM agent'ın çalışması için gerekli. Kalan risk: bu managed policy
+# ssm:GetParameter* yetkisini "*" üzerinde veriyor; sunucu ele geçirilirse hesaptaki
+# (KMS ile korunmayan) bütün Parameter Store değerleri okunabilir. Şu an Parameter
+# Store kullanılmıyor; kullanılırsa özel bir policy ile daraltılmalı.
 resource "aws_iam_role_policy_attachment" "app_ssm" {
   role       = aws_iam_role.app.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" # SSM'den komut alabilsin
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-resource "aws_iam_role_policy_attachment" "app_ecr" {
-  role       = aws_iam_role.app.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly" # imaj çekebilsin, yükleyemesin
+# ECR: sadece case1-app deposundan imaj çekebilir. Yükleyemez, başka depoları
+# listeleyemez/okuyamaz (AmazonEC2ContainerRegistryReadOnly bütün depolara okuma veriyordu).
+resource "aws_iam_role_policy" "app_ecr_pull" {
+  name = "case1-app-ecr-pull"
+  role = aws_iam_role.app.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "EcrLogin"
+        Effect   = "Allow"
+        Action   = "ecr:GetAuthorizationToken" # kaynak seviyesinde kısıtlanamıyor
+        Resource = "*"
+      },
+      {
+        Sid    = "PullOnlyThisRepo"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchCheckLayerAvailability"
+        ]
+        Resource = aws_ecr_repository.app.arn
+      }
+    ]
+  })
 }
 
 resource "aws_iam_instance_profile" "app" {
