@@ -10,3 +10,9 @@
 **/*.pem
 tfplan
 .DS_Store
+*.tfvars
+*.key
+crash.log
+crash.*.log
+.terraform.tfstate.lock.info
+__MACOSX/
