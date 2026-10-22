@@ -53,15 +53,21 @@ jobs:
           TAG: ${{ github.sha }}
         run: |
           SHORT="${TAG:0:7}"
-          sed -i "s/__VERSION__/$SHORT/" app/index.html
-          docker build -t "$REGISTRY/$ECR_REPOSITORY:$SHORT" app
-          docker push "$REGISTRY/$ECR_REPOSITORY:$SHORT"
-          # Deploy tag ile değil digest ile: tag sonradan başka imaja taşınsa bile
-          # sunucuya tam olarak bu build'in imajı gider.
-          REPO_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$REGISTRY/$ECR_REPOSITORY:$SHORT")
-          DIGEST="${REPO_DIGEST##*@}"
+          # ECR tag'leri IMMUTABLE: aynı commit tekrar çalıştırılırsa (re-run) tag zaten
+          # vardır ve push reddedilir. Bu durumda build/push atlanır, mevcut imaj kullanılır.
+          if DIGEST=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+               --image-ids imageTag="$SHORT" --query 'imageDetails[0].imageDigest' --output text 2>/dev/null); then
+            echo "İmaj zaten var ($SHORT), build/push atlanıyor."
+          else
+            sed -i "s/__VERSION__/$SHORT/" app/index.html
+            docker build -t "$REGISTRY/$ECR_REPOSITORY:$SHORT" app
+            docker push "$REGISTRY/$ECR_REPOSITORY:$SHORT"
+            # Deploy tag ile değil digest ile: sunucuya tam olarak bu build'in imajı gider.
+            REPO_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$REGISTRY/$ECR_REPOSITORY:$SHORT")
+            DIGEST="${REPO_DIGEST##*@}"
+          fi
           if [[ ! "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]; then
-            echo "HATA: Digest alınamadı: '$REPO_DIGEST'"
+            echo "HATA: Digest alınamadı: '$DIGEST'"
             exit 1
           fi
           echo "İmaj: $REGISTRY/$ECR_REPOSITORY@$DIGEST (tag: $SHORT)"

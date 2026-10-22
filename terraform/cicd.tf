@@ -16,8 +16,8 @@
 # ---------- ECR: Docker imajlarının deposu ----------
 resource "aws_ecr_repository" "app" {
   name                 = "case1-app"
-  image_tag_mutability = "MUTABLE"
-  force_delete         = true # destroy'da içindeki imajlarla birlikte silinsin (lab için)
+  image_tag_mutability = "IMMUTABLE" # bir tag push edildikten sonra başka imaja taşınamaz
+  force_delete         = true        # destroy'da içindeki imajlarla birlikte silinsin (lab için)
 
   image_scanning_configuration {
     scan_on_push = true # her push'ta güvenlik taraması
@@ -111,7 +111,8 @@ resource "aws_iam_user_policy" "github" {
           "ecr:UploadLayerPart",
           "ecr:CompleteLayerUpload",
           "ecr:PutImage",
-          "ecr:BatchGetImage"
+          "ecr:BatchGetImage",
+          "ecr:DescribeImages" # push öncesi "bu tag zaten var mı?" kontrolü (IMMUTABLE)
         ]
         Resource = aws_ecr_repository.app.arn
       },
