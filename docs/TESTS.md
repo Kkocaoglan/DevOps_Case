@@ -325,6 +325,8 @@ Her testin bir **beklenen sonucu** var. Sonuç beklenenden farklıysa bir bulgu 
   ```
   Beklenen: İkisi de `InvalidParameters` hatası vermeli, komut sunucuya hiç gönderilmemeli. İkinci deneme, digest'in arkasına komut eklemenin (enjeksiyon) regex'e takıldığını gösteriyor.
 
+  **Sonuç (2026-10-22):** S10c, S10d ve S10e beklendiği gibi: S3/EC2/ECR `AccessDenied`, `AWS-RunShellScript` `AccessDeniedException`, geçersiz ve enjeksiyonlu digest `InvalidParameters`. Kanıt: [`screenshots/leaked-key-tests.png`](screenshots/leaked-key-tests.png) (hesap numarası maskeli).
+
 - **S10b. OIDC yasağının kanıtı (README'deki tasarım kararının gerekçesi):**
   ```bash
   aws iam list-open-id-connect-providers

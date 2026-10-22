@@ -158,6 +158,7 @@ Kurulum adımları: [docs/CICD.md](docs/CICD.md)
 - `docs/screenshots/vpn-off.png`: VPN kapalıyken uygulama açılmıyor.
 - `docs/screenshots/actions.png`: Başarılı bir CI/CD çalışması.
 - `docs/screenshots/deployed.png`: Deploy edilen versiyon.
+- `docs/screenshots/leaked-key-tests.png`: Sızan CI anahtarıyla yetki testleri (S10c/S10d/S10e): keyfi komut `AccessDenied`, geçersiz digest `InvalidParameters`.
 
 ## Maliyet (yaklaşık)
 - **NAT Gateway:** Saatlik ücret ve işlenen veri başına ücret. Bu altyapıdaki en büyük kalem.
