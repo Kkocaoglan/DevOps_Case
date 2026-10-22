@@ -27,6 +27,9 @@ jobs:
     runs-on: ubuntu-latest
     # Sadece main branch'inden deploy (elle tetiklemede de)
     if: github.ref == 'refs/heads/main'
+    # AWS secret'ları "production" environment'ında; environment'ın deployment
+    # branch kuralı sadece main'e izin veriyor (ve istenirse onaycı istiyor).
+    environment: production
 
     steps:
       - name: Kodu çek
