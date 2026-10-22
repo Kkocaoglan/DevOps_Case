@@ -80,8 +80,12 @@ flowchart LR
 14. **VPN sunucusunda `iptables` FORWARD kısıtı.** Varsayılan politika DROP. Tünelden sadece private subnet'e TCP 22/80 ve ICMP geçiyor; `169.254.0.0/16` (VPN sunucusunun metadata servisi) açıkça engelli. VPN kullanıcıları VPC'nin geri kalanına ve birbirlerine ulaşamıyor.
 15. **Uygulama sunucusunun ECR yetkisi daraltılmış.** Sadece `case1-app` deposundan imaj çekebiliyor (managed `AmazonEC2ContainerRegistryReadOnly` yerine inline policy).
 16. **SSM ile deploy, port açmadan.** SSM agent NAT üzerinden AWS'ye **dışarıya doğru** bağlanıyor. Deploy için hiçbir gelen port açılmıyor.
-17. **ECR `scan_on_push`.** Her imaj push edildiğinde bilinen açıklar için taranıyor.
-18. **Gizli dosyalar Git'te yok.** `.gitignore` ile state, `.ovpn`, key ve `.tfvars` dosyaları repodan hariç tutuluyor. Provider sürümleri `~>` ile üstten sınırlı, lock dosyası commit'li.
+17. **ECR taraması ve deploy kapısı.** `scan_on_push` açık; pipeline taramanın bitmesini bekliyor ve imajda CRITICAL açık varsa (ya da tarama başarısızsa) deploy etmiyor.
+18. **ECR tag'leri değiştirilemez (IMMUTABLE).** Bir sürümün tag'i sonradan başka bir imaja taşınamaz.
+19. **Container root olarak çalışmıyor.** İmaj `nginx-unprivileged` tabanlı (uid 101, port 8080, sunucuda 80 → 8080) ve `HEALTHCHECK` içeriyor.
+20. **GitHub Actions eylemleri commit SHA ile sabit.** Dependabot eylem ve base imaj güncellemelerini PR olarak açıyor; `main` korumalı (PR zorunlu, force-push yok).
+21. **VPC'nin default security group'u boş.** Terraform'a alındı, bütün kuralları silindi; yanlışlıkla ona bağlanan bir kaynak hiçbir trafik alamaz.
+22. **Gizli dosyalar Git'te yok.** `.gitignore` ile state, `.ovpn`, key ve `.tfvars` dosyaları repodan hariç tutuluyor. Provider sürümleri `~>` ile üstten sınırlı, lock dosyası commit'li.
 
 ### Bilerek kabul edilen trade-off'lar
 - **Sertifika private key'leri Terraform state'inde ve EC2 user_data'sında duruyor.** Bu sayede kurulum tamamen otomatik. Üretim ortamında state şifreli bir remote backend'de (S3 + KMS) tutulmalı, sertifikalar da Secrets Manager'dan IAM rolüyle çekilmeli.
@@ -106,7 +110,9 @@ flowchart LR
 ├── app/
 │   ├── Dockerfile
 │   └── index.html
-├── .github/workflows/deploy.yml
+├── .github/
+│   ├── workflows/deploy.yml
+│   └── dependabot.yml # action SHA'ları ve base imaj güncellemeleri
 ├── scripts/deploy.sh  # SSM (case1-deploy-app) ile digest deploy + sonucu bekleme
 └── docs/
     ├── architecture.png / architecture.mmd
@@ -149,7 +155,7 @@ terraform apply
 ## CI/CD
 `app/` klasörüne yapılan her push şu adımları tetikliyor:
 ```
-GitHub Actions (production environment) → access key → docker build → ECR push → digest → SSM (case1-deploy-app) ile private sunucuda pull + restart + sağlık kontrolü
+GitHub Actions (production environment) → access key → docker build → ECR push (IMMUTABLE tag) → tarama kapısı (CRITICAL yoksa) → digest → SSM (case1-deploy-app) ile private sunucuda pull + restart + sağlık kontrolü
 ```
 Kurulum adımları: [docs/CICD.md](docs/CICD.md)
 

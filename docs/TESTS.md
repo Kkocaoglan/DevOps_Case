@@ -95,7 +95,7 @@ Komutlar macOS için yazıldı. macOS'taki `nc`'de bağlantı zaman aşımı `-G
 - **Kalan çözüm:**
   - Yeni container'ı önce farklı bir portta başlat, sağlık kontrolü geçerse trafiği ona çevir (blue/green).
   - Kontrol başarısız olursa önceki digest'e otomatik geri dön.
-  - Dockerfile'a `HEALTHCHECK` ekle.
+  - ~~Dockerfile'a `HEALTHCHECK` ekle.~~ ✅ Eklendi (B22). Docker container'ı `healthy`/`unhealthy` olarak işaretliyor, ama `unhealthy` container'ı kendiliğinden yeniden başlatmıyor ya da geri almıyor.
 
 ### 🟠 B9: Altyapı kodu için CI yok
 - **Sorun:** Terraform değişiklikleri kimse incelemeden, otomatik bir kontrolden geçmeden uygulanıyor.
@@ -119,15 +119,11 @@ Komutlar macOS için yazıldı. macOS'taki `nc`'de bağlantı zaman aşımı `-G
 - **Sorun:** İki Security Group'ta da egress `0.0.0.0/0`, yani her port her yere açık.
 - **Çözüm:** Uygulama sunucusunda egress'i 443'e (ECR, SSM, apt) ve DNS'e daralt. Daha da iyisi VPC endpoint'leri kullanmak (ECR, SSM, S3), böylece NAT'a bile gerek kalmaz.
 
-### 🟡 B13: Tedarik zinciri
-- **Sorun:**
-  - `nginx:alpine` imajı bir tag'e değil "son sürüm"e bağlı.
-  - ECR tag'leri değiştirilebilir (mutable). Deploy artık digest ile yapıldığı için sunucuya giden imaj tag değişikliğinden etkilenmiyor, ama tag'ler yine de güvenilir bir sürüm kaydı değil.
-  - GitHub Actions eylemleri: B24.
-- **Çözüm:**
-  - Base imajı digest ile sabitle.
-  - ECR'da `image_tag_mutability = "IMMUTABLE"` kullan.
-  - Dependabot'u aç (Docker base imajı ve eylem sürümleri için).
+### 🟡 B13: Tedarik zinciri (büyük ölçüde düzeltildi)
+- ✅ **ECR tag'leri IMMUTABLE.** Bir tag push edildikten sonra başka bir imaja taşınamaz. Workflow aynı commit tekrar çalıştırıldığında (re-run) tag'in varlığını kontrol edip build/push'u atlıyor.
+- ✅ **Deploy öncesi tarama kapısı.** Push'tan sonra ECR taraması bekleniyor; CRITICAL bulgu varsa ya da tarama başarısızsa deploy yapılmıyor (fail-closed).
+- ✅ **GitHub Actions eylemleri SHA ile sabit** (B24), Dependabot açık.
+- **Kalan:** Base imaj `nginxinc/nginx-unprivileged:alpine` hâlâ hareketli bir tag; her build o anki en yeni alpine sürümünü çekiyor. Tekrarlanabilir build için `alpine@sha256:...` ile digest'e sabitlenmeli ve Dependabot ile güncellenmeli (Dependabot sürüm numarası taşımayan `alpine` tag'ini güncelleyemiyor). Tarama kapısı sadece CRITICAL'a bakıyor; HIGH bulgular logda görünüyor ama deploy'u durdurmuyor.
 
 ### 🟡 B14: Diğer küçük bulgular
 - SSH anahtarı parolasız oluşturuldu (`-N ""`).
@@ -172,13 +168,17 @@ Komutlar macOS için yazıldı. macOS'taki `nc`'de bağlantı zaman aşımı `-G
 - **Sorun:** `ta.key` bütün client'larda aynı. Bir client'ın dosyası sızarsa tls-crypt koruması (port taramasına görünmezlik, el sıkışmanın şifrelenmesi) herkes için düşer ve anahtarı değiştirmek bütün client'ları etkiler.
 - **Çözüm:** `tls-crypt-v2`: her client'a sunucu anahtarıyla sarılmış ayrı bir anahtar verilir, tek bir client'ın anahtarı diğerlerini etkilemez.
 
-### 🟡 B21: Default security group ve NACL yönetilmiyor
-- **Sorun:** VPC'nin default security group'u (kendi içinde her şeye izin veren) ve default NACL'i (her şeye izin veren) Terraform'da tanımlı değil. Yanlışlıkla default SG'ye bağlanan bir kaynak beklenmedik erişim kazanabilir, drift de görünmez.
-- **Çözüm:** `aws_default_security_group` ile default SG'nin bütün kurallarını boşalt; `aws_default_network_acl` ile default NACL'i kod altına al.
+### 🟡 B21: Default security group ve NACL yönetilmiyordu (kısmen düzeltildi)
+- **Sorun:** VPC'nin default security group'u (kendi içinde her şeye izin veren) ve default NACL'i (her şeye izin veren) Terraform'da tanımlı değildi. Yanlışlıkla default SG'ye bağlanan bir kaynak beklenmedik erişim kazanabilir, drift de görünmez.
+- ✅ **Default SG:** `aws_default_security_group` ile Terraform'a alındı, bütün ingress/egress kuralları boş. Kanıt: Test S15.
+- **Kalan:** Default NACL hâlâ her şeye izin veriyor (bütün subnet'ler onu kullanıyor). `aws_default_network_acl` ile kod altına alınıp subnet bazında gerekli kurallarla daraltılabilir; Security Group'lar zaten asıl filtreyi yaptığı için öncelik düşük.
 
-### 🟡 B22: Container root olarak çalışıyor
-- **Sorun:** `nginx:alpine` master süreci container içinde root olarak çalışıyor. Container kaçışı gerektiren bir açıkta etki daha büyük olur.
-- **Çözüm:** `nginxinc/nginx-unprivileged` (8080'i dinler, root değil) kullan, port eşlemesini `-p 80:8080` yap. Ek olarak `--read-only`, `--cap-drop ALL`, `--security-opt no-new-privileges`.
+### ✅ B22: Container root olarak çalışıyordu (bu sürümde düzeltildi)
+- **Sorun:** `nginx:alpine` master süreci container içinde root olarak çalışıyordu. Container kaçışı gerektiren bir açıkta etki daha büyük olurdu.
+- **Çözüm (uygulandı):** Base imaj `nginxinc/nginx-unprivileged:alpine`: süreçler uid 101 (`nginx`) ile çalışıyor, 8080'i dinliyor. SSM dokümanında port eşlemesi `-p 80:8080`; Security Group 80'de kaldı. Dockerfile'a `HEALTHCHECK` eklendi.
+- **Not:** Bu değişiklikten önceki imajlar 80'i dinliyor; onlara deploy dokümanıyla rollback yapılırsa sağlık kontrolü geçmez. Rollback sadece bu geçişten sonraki imajlara yapılabilir.
+- **Kanıt:** Test S14.
+- **Kalan iyileştirme:** `--read-only` (+ `/tmp` için tmpfs), `--cap-drop ALL`, `--security-opt no-new-privileges`.
 
 ### ✅ B23: Branch protection ve environment koruması eksikti (bu sürümde düzeltildi)
 - **Sorun:** `main`'e doğrudan push ve force-push açıktı. AWS secret'ları repo seviyesindeydi; repo'ya yazma yetkisi olan biri secret'ları okuyan bir workflow ekleyebilirdi.
@@ -188,9 +188,9 @@ Komutlar macOS için yazıldı. macOS'taki `nc`'de bağlantı zaman aşımı `-G
 - **Kanıt (2026-10-22):** `main`'e direkt `git push` reddedildi: `GH013: Repository rule violations found ... Changes must be made through a pull request.`
 - **Not:** Required reviewer tanımlı değil. Ekip büyürse deploy öncesi onay için `production` environment'ına reviewer eklenmeli.
 
-### 🟡 B24: GitHub Actions eylemleri tag ile sabitlenmiş
-- **Sorun:** `actions/checkout@v4`, `aws-actions/configure-aws-credentials@v4`, `aws-actions/amazon-ecr-login@v2` tag ile çağrılıyor. Tag'ler taşınabilir; eylemin deposu ele geçirilirse kötü amaçlı kod, AWS anahtarlarına erişimi olan job'da çalışır.
-- **Çözüm:** Eylemleri tam commit SHA'sıyla sabitle (yanına sürüm yorumu yaz), Dependabot ile güncelle.
+### ✅ B24: GitHub Actions eylemleri tag ile sabitlenmişti (bu sürümde düzeltildi)
+- **Sorun:** Eylemler tag ile çağrılıyordu (`actions/checkout@v4` gibi). Tag'ler taşınabilir; eylemin deposu ele geçirilirse kötü amaçlı kod, AWS anahtarlarına erişimi olan job'da çalışırdı.
+- **Çözüm (uygulandı):** Üç eylem de tam commit SHA'sıyla sabit, yanında sürüm yorumu var (`checkout` v7.0.1, `configure-aws-credentials` v6.3.0, `amazon-ecr-login` v2.1.7; hepsi Node 24). `.github/dependabot.yml` eylemleri ve `app/` base imajını haftalık kontrol edip güncellemeyi PR olarak açıyor. Runner `ubuntu-24.04`'e sabit.
 
 ### ✅ B25: Provider sürümleri üstten sınırsızdı (bu sürümde düzeltildi)
 - **Sorun:** `>= 6.23.0` gibi kısıtlar `terraform init -upgrade`'de bir sonraki major sürümün (kırıcı değişikliklerle) gelmesine izin veriyordu.
@@ -371,6 +371,21 @@ Her testin bir **beklenen sonucu** var. Sonuç beklenenden farklıysa bir bulgu 
 
   **Sonuç (2026-10-22):** Kurallar beklendiği gibi (`-P FORWARD DROP`, 169.254/16 DROP, sadece `10.0.2.0/24` için 22/80/ICMP; çıkış arayüzü `ens5`, dinamik bulunuyor). `$APP_IP:80` ve ping başarılı. Public subnet denemesinden sonra DROP politikası sayacı 0 → 10 paket. Geçti.
 
+- **S14. Container root olmayan kullanıcıyla çalışıyor (B22'nin kanıtı):** Uygulama sunucusunda (SSH ile):
+  ```bash
+  sudo docker exec web id
+  sudo docker ps --format '{{.Names}} {{.Status}} {{.Ports}}'
+  ```
+  Beklenen: `uid=101(nginx) gid=101(nginx)`. `docker ps` çıktısında `Up ... (healthy)` ve `0.0.0.0:80->8080/tcp`.
+
+- **S15. Default security group boş (B21):**
+  ```bash
+  VPC_ID=$(aws ec2 describe-vpcs --filters Name=tag:Name,Values=case1-vpc --query "Vpcs[0].VpcId" --output text)
+  aws ec2 describe-security-groups --filters Name=vpc-id,Values=$VPC_ID Name=group-name,Values=default \
+    --query "SecurityGroups[0].{in:IpPermissions,out:IpPermissionsEgress}"
+  ```
+  Beklenen: `{"in": [], "out": []}`.
+
 - **S11. Statik analiz:**
   ```bash
   pip install checkov
@@ -444,6 +459,16 @@ Her testin bir **beklenen sonucu** var. Sonuç beklenenden farklıysa bir bulgu 
   ```
   - Beklenen: Önceki imaj sunucuda zaten olduğu için `docker pull` hemen biter, site eski sürümle geri gelir.
   - Rollback'in ne kadar sürdüğünü ölç. Bu süre, otomatik rollback'in (B8) neden gerekli olduğunu gösteriyor.
+  - Dikkat: nginx-unprivileged geçişinden (B22) önceki imajlar 80'i dinliyor; onlara rollback sağlık kontrolünden geçmez.
+- **C5. Aynı commit'i tekrar çalıştırma (IMMUTABLE tag):**
+  - Actions'ta son başarılı **Build and Deploy** çalışmasını aç → **Re-run all jobs**.
+  - Beklenen: Build adımında `İmaj zaten var (<sha>), build/push atlanıyor.` yazmalı, pipeline yeşil bitmeli.
+  - Karşı test (yönetici kimliğiyle, VPN gerekmez): aynı tag'e başka bir imaj push etmeyi dene; `tag invalid: The image tag '...' already exists ... cannot be overwritten because the repository is immutable` hatası beklenir.
+- **C6. Tarama kapısı (CRITICAL açık içeren imaj):**
+  - Bir branch'te `app/Dockerfile`'daki `FROM` satırını eski bir imajla değiştir (ör. `FROM nginxinc/nginx-unprivileged:1.18-alpine`), PR açıp merge et.
+  - Beklenen: "Güvenlik taraması kapısı" adımında `HATA: İmajda N CRITICAL açık var, deploy yapılmıyor.` yazmalı, deploy adımı çalışmamalı, site eski sürümle açık kalmalı.
+  - Eski imajda CRITICAL çıkmazsa (tarama veritabanı değişebilir) logdaki `Tarama sonucu` satırında sayılar görünür; testi daha eski bir sürümle tekrarla.
+  - Sonra `FROM` satırını geri al.
 
 ---
 
@@ -456,7 +481,8 @@ Her testin bir **beklenen sonucu** var. Sonuç beklenenden farklıysa bir bulgu 
    - VPN için Elastic IP (B10)
    - `source_dest_check = true` (B11)
    - Otomatik rollback (B8)
-   - Default SG'yi boşaltmak (B21), container'ı root olmayan kullanıcıyla çalıştırmak (B22), eylemleri SHA ile sabitlemek (B24)
+   - ~~Default SG'yi boşaltmak (B21), container'ı root olmayan kullanıcıyla çalıştırmak (B22), eylemleri SHA ile sabitlemek (B24)~~ ✅
+   - ~~ECR IMMUTABLE ve tarama kapısı (B13)~~ ✅
 2. **Kısa vadede:**
    - Remote state: S3 + KMS + lockfile (B1)
    - Secrets Manager (B1)
@@ -467,7 +493,7 @@ Her testin bir **beklenen sonucu** var. Sonuç beklenenden farklıysa bir bulgu 
 3. **Orta vadede:**
    - VPC Flow Logs, CloudWatch, alarmlar, CloudTrail (B7)
    - VPC endpoint'leri ile NAT'ı kaldırmak (B12)
-   - İmaj ve eylemleri sabitleme (B13)
+   - Base imajı digest ile sabitleme (B13)
 4. **Ölçek ve erişilebilirlik:**
    - Çoklu AZ, ASG + internal ALB (B6)
    - AWS Client VPN + SSO/MFA ile OpenVPN sunucusunu tamamen yönetilen bir servise bırakmak

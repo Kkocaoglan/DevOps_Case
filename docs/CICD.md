@@ -9,10 +9,11 @@
      ▼
  GitHub Actions runner (GitHub'ın makinesi, internette), job: environment "production"
      │ 1. production environment secret'larındaki access key ile AWS'ye giriş
-     │ 2. docker build app/   (index.html'e commit SHA'sı yazılır)
-     │ 3. docker push → ECR   (case1-app:<kısa sha>)
-     │ 4. push edilen imajın digest'i alınır (sha256:...)
-     │ 5. scripts/deploy.sh <digest>:
+     │ 2. case1-app:<kısa sha> ECR'da zaten var mı? (tag'ler IMMUTABLE; varsa 3-4 atlanır)
+     │ 3. docker build app/   (index.html'e commit SHA'sı yazılır)
+     │ 4. docker push → ECR   ve push edilen imajın digest'i alınır (sha256:...)
+     │ 5. Tarama kapısı: ECR taraması beklenir, CRITICAL bulgu varsa burada durulur
+     │ 6. scripts/deploy.sh <digest>:
      │      Name=case1-app tag'li sunucuyu bul
      │      SSM send-command, doküman: case1-deploy-app, parametre: ImageDigest
      │        → ECR login → digest ile pull → eski container'ı sil → yenisini başlat → curl sağlık kontrolü
@@ -41,15 +42,15 @@ GitHub Actions'ta kalmak için kalan yol bir **IAM kullanıcısı + access key.*
 > Alternatif olarak AWS CodePipeline + CodeBuild da denendi. O yolda AWS kodu GitHub'dan kendisi çektiği için hiç anahtar gerekmiyor. GitHub Actions'ın ekosistemi ve görünürlüğü tercih edildiği için bu yolda kalındı.
 
 ## Terraform kaynakları (`terraform/cicd.tf`)
-- **`aws_ecr_repository.app`:** İmaj deposu. `scan_on_push` açık, `force_delete` açık (sadece lab için).
-- **`aws_ssm_document.deploy`:** `case1-deploy-app` deploy dokümanı. Tek parametresi `ImageDigest`, `^sha256:[a-f0-9]{64}$` ile doğrulanıyor. Repo adresi dokümana gömülü. Sağlık kontrolü geçerse bu repodan sadece en yeni 2 imajı (çalışan + bir önceki) bırakıp eskileri siliyor.
+- **`aws_ecr_repository.app`:** İmaj deposu. Tag'ler `IMMUTABLE` (push edilen bir tag başka imaja taşınamaz), `scan_on_push` açık, `force_delete` açık (sadece lab için).
+- **`aws_ssm_document.deploy`:** `case1-deploy-app` deploy dokümanı. Tek parametresi `ImageDigest`, `^sha256:[a-f0-9]{64}$` ile doğrulanıyor. Repo adresi dokümana gömülü. Container'ı `-p 80:8080` ile başlatıyor (imaj `nginx-unprivileged`, 8080'i dinliyor). Sağlık kontrolü geçerse bu repodan sadece en yeni 2 imajı (çalışan + bir önceki) bırakıp eskileri siliyor.
 - **`aws_iam_role.app` + `aws_iam_instance_profile.app`:** Nginx sunucusunun "çalışan kartı".
   - `AmazonSSMManagedInstanceCore` (managed): SSM agent'ın çalışması için. İçindeki `ssm:GetParameter*` yetkisi `*` üzerinde; kalan risk olarak README'de ve TESTS.md B18'de yazıyor.
   - `case1-app-ecr-pull` (inline): Sadece `case1-app` deposundan imaj çekebilir, yükleyemez, başka depoları göremez.
 - **`aws_iam_user.github`:** `case1-github-actions` kullanıcısı. `force_destroy = false`: `true` olunca Terraform destroy'da login profile'ı silmeye çalışıyor ve bu hesaptaki SCP `iam:*LoginProfile*` işlemlerini yasakladığı için hata veriyor. Access key ayrı bir kaynak olduğu için destroy'da zaten siliniyor. Konsol şifresi yok, sadece programatik erişim.
 - **`aws_iam_user_policy.github`:** Dar yetkiler:
   - `ecr:GetAuthorizationToken` (`*`, kaynak seviyesinde kısıtlanamıyor)
-  - ECR push yetkileri sadece `case1-app` deposunda
+  - ECR push yetkileri, `ecr:DescribeImages` (tag var mı kontrolü) ve `ecr:DescribeImageScanFindings` (tarama kapısı) sadece `case1-app` deposunda
   - `ec2:DescribeInstances` (`*`, sunucuyu tag'iyle bulmak için; kaynak seviyesinde kısıtlanamıyor)
   - `ssm:SendCommand` sadece `case1-deploy-app` dokümanı + uygulama sunucusu
   - `ssm:GetCommandInvocation` (`*`): Bu API kaynak seviyesinde yetkilendirmeyi desteklemiyor (AWS Service Authorization Reference'ta resource type tanımlı değil). Sadece komut sonucunu okuyor.
@@ -57,6 +58,7 @@ GitHub Actions'ta kalmak için kalan yol bir **IAM kullanıcısı + access key.*
 
 Diğer dosyalar:
 - **`.github/workflows/deploy.yml`:** Pipeline.
+- **`.github/dependabot.yml`:** Sabitlenmiş action SHA'larını ve `app/` base imajını haftalık kontrol edip güncellemeyi PR olarak açar.
 - **`scripts/deploy.sh`:** SSM deploy ve sonucu bekleme.
 - **`app/`:** Dockerfile ve sayfa.
 
@@ -123,6 +125,7 @@ git status          # tfstate / .ovpn / .pem OLMAMALI
 git push
 ```
 GitHub'da **Actions** sekmesini aç ve **Build and Deploy** çalışmasını izle. Son adımın logunda şunlar olmalı:
+- `Tarama sonucu (önem seviyesine göre): ...` ve `CRITICAL açık yok, deploy'a geçiliyor.`
 - `Doküman: case1-deploy-app` ve `Digest: sha256:...`
 - `SAGLIK_KONTROLU_OK`
 - `Durum: Success`
@@ -147,7 +150,7 @@ git push
 1-2 dakika içinde sayfa yeni başlıkla ve yeni SHA ile açılmalı.
 
 ### Elle rollback
-Sunucuda bir önceki imaj tutuluyor. Önceki digest'i ECR'dan bulup aynı dokümanla deploy et (yönetici kimliğiyle):
+Sunucuda bir önceki imaj tutuluyor. Önceki digest'i ECR'dan bulup aynı dokümanla deploy et (yönetici kimliğiyle). Not: `nginx-unprivileged` geçişinden önceki imajlar 80'i dinliyor; onlara dönülürse sağlık kontrolü geçmez.
 ```bash
 aws ecr describe-images --repository-name case1-app \
   --query "sort_by(imageDetails,&imagePushedAt)[-2].imageDigest" --output text
@@ -165,11 +168,14 @@ bash scripts/deploy.sh sha256:<önceki digest>
 - **`on.push.branches: [main]` + `paths`:** Sadece main'de `app/`, `scripts/` ya da workflow dosyası değişince çalışıyor. README'yi düzenlemek deploy tetiklemiyor.
 - **`permissions: contents: read`:** Workflow repoya yazamıyor.
 - **`concurrency`:** Arka arkaya iki push gelirse deploy'lar üst üste binmiyor, sırayla çalışıyor.
+- **`runs-on: ubuntu-24.04`:** `ubuntu-latest` yerine sabit sürüm; runner imajı kendiliğinden değişmiyor.
+- **`uses: ...@<commit SHA> # vX.Y.Z`:** Action'lar tag yerine commit SHA ile sabit. Tag taşınsa bile AWS anahtarlarını gören bu job'da değişmiş kod çalışmaz. Güncellemeler Dependabot PR'ı olarak gelir.
 - **`if: github.ref == 'refs/heads/main'`:** Elle başka bir branch'ten tetiklense bile job atlanıyor.
 - **`environment: production`:** Job, AWS secret'larını bu environment'tan alıyor. Environment'ın deployment branch kuralı sadece `main`'e izin veriyor; required reviewer tanımlıysa deploy onay bekliyor.
 - **`configure-aws-credentials`:** Secrets'taki anahtarı ortam değişkenine koyuyor. Sonraki `aws` ve `docker` komutları bununla çalışıyor.
 - **`amazon-ecr-login`:** Docker'ı ECR'a login ediyor, registry adresini output olarak veriyor.
-- **Build adımı:** `__VERSION__`'ı kısa SHA ile değiştiriyor, imajı build edip push ediyor. Push'tan sonra `docker inspect` ile imajın digest'ini alıyor, formatını doğruluyor ve `$GITHUB_ENV` üzerinden bir sonraki adıma aktarıyor.
+- **Build adımı:** Önce `describe-images` ile `case1-app:<kısa sha>` tag'inin ECR'da olup olmadığına bakıyor. Tag'ler IMMUTABLE olduğu için aynı commit tekrar çalıştırılırsa (re-run) push reddedilirdi; bu durumda build/push atlanıp mevcut imajın digest'i kullanılıyor. Yoksa `__VERSION__`'ı kısa SHA ile değiştiriyor, imajı build edip push ediyor ve `docker inspect` ile digest'i alıyor. Digest'in formatını doğrulayıp `$GITHUB_ENV` üzerinden sonraki adımlara aktarıyor.
+- **Tarama kapısı:** `aws ecr wait image-scan-complete` ile taramanın bitmesini bekliyor (en fazla ~5 dk), `describe-image-scan-findings` ile önem seviyesine göre bulgu sayılarını yazdırıyor. CRITICAL sayısı 0'dan büyükse adım kırmızı biter ve deploy yapılmaz. Tarama başarısız olursa da deploy yapılmaz (fail-closed).
 - **Deploy adımı:** `scripts/deploy.sh` sunucuyu tag'iyle buluyor, `case1-deploy-app` dokümanını digest parametresiyle çağırıyor, sonucu 10 sn arayla en fazla ~5 dk sorguluyor, çıktıyı yazdırıyor. Sonuç `Success` değilse adım kırmızı oluyor.
 
 ## Sorun giderme
@@ -180,6 +186,10 @@ bash scripts/deploy.sh sha256:<önceki digest>
 - **`AccessDenied ... ecr:...`:** `aws_iam_user_policy.github`'daki ECR ARN'si yanlış.
 - **`AccessDenied ... ssm:SendCommand`:** Doküman adı yanlış (workflow'daki `DEPLOY_DOCUMENT`) ya da `terraform apply` yapılmadığı için doküman yok.
 - **`InvalidParameters`:** Digest formatı yanlış. `sha256:` + 64 küçük harf hex olmalı.
+- **`HATA: İmajda N CRITICAL açık var, deploy yapılmıyor.`:** Tarama kapısı çalıştı. Base imajı güncelle (Dependabot PR'ı ya da `docker pull` ile en yeni `alpine` sürümü yeniden build), tekrar push et. Bulgular: ECR konsolu → case1-app → imaj → Vulnerabilities.
+- **`Waiter ImageScanComplete failed`:** Tarama `FAILED`/`UNSUPPORTED_IMAGE` döndü ya da 5 dk'da bitmedi. ECR konsolunda imajın tarama durumuna bak; geçici bir sorunsa Re-run.
+- **`tag invalid ... already exists ... immutable`:** Normalde olmamalı, build adımı tag'i önceden kontrol ediyor. `ecr:DescribeImages` yetkisi eksikse kontrol başarısız olur ve push denenir; `terraform apply` yapıldığından emin ol.
+- **Sağlık kontrolü geçmiyor, container `unhealthy`:** İmaj 8080'i dinlemeli; Dockerfile'da `nginxinc/nginx-unprivileged` tabanını değiştirdiysen port eşlemesini (SSM dokümanında `-p 80:8080`) de güncelle.
 - **`HATA: Çalışan bir case1-app sunucusu bulunamadı`:** Sunucu kapalı.
 - **`InvalidInstanceId`:** Sunucu SSM'e kayıtlı değil. 2. adıma dön. Sunucuda `sudo snap services amazon-ssm-agent` ile agent'ın durumuna bak.
 - **SSM `Failed`:** Logdaki "sunucudaki çıktı" bölümüne bak.
