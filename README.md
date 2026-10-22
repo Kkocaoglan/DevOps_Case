@@ -38,7 +38,7 @@ flowchart LR
     app -- "sadece çıkış" --> nat --> igw
     gh -- "access key (GitHub Secrets)" --> iam
     gh -- "docker push" --> ecr
-    gh -- "send-command" --> ssm
+    gh -- "send-command<br/>(sadece case1-deploy-app)" --> ssm
     ssm -.- app
     app -.-> ecr
 ```
@@ -48,15 +48,15 @@ flowchart LR
 - **VPC `10.0.0.0/16`:** Uygulamanın yaşadığı izole ağ.
 - **Public subnet `10.0.1.0/24`:** Route table'ında `0.0.0.0/0 → Internet Gateway` yolu var. Burada sadece iki şey duruyor: VPN sunucusu ve NAT Gateway.
 - **Private subnet `10.0.2.0/24`:** IGW'ye giden yolu yok, sadece `0.0.0.0/0 → NAT Gateway` yolu var. Makineler public IP almıyor.
-- **OpenVPN sunucusu (EC2):** İnternete açık **tek kapı**, UDP 1194. VPN istemcilerinden gelen trafiği private subnet'e iletiyor (IP forwarding + NAT/MASQUERADE).
+- **OpenVPN sunucusu (EC2):** İnternete açık **tek kapı**, UDP 1194. VPN istemcilerinden gelen trafiği private subnet'e iletiyor (IP forwarding + NAT/MASQUERADE). `iptables` FORWARD zinciri sadece private subnet'e SSH/HTTP/ICMP'ye izin veriyor.
 - **Uygulama sunucusu (EC2):** Docker içinde Nginx çalışıyor. Sadece VPN sunucusunun Security Group'undan gelen trafiği kabul ediyor.
 - **NAT Gateway:** Private sunucunun **dışarıya** çıkabilmesi için var: paket kurulumu, `docker pull`, SSM. İçeriye doğru bağlantı kabul etmiyor.
-- **CI/CD:** GitHub Actions imajı build edip **ECR**'a push ediyor, sonra private sunucuya **SSM Run Command** ile deploy ediyor.
+- **CI/CD:** GitHub Actions imajı build edip **ECR**'a push ediyor, sonra private sunucuya **SSM Run Command** ile, sadece bu iş için yazılmış `case1-deploy-app` dokümanını kullanarak imaj digest'iyle deploy ediyor.
 
 ### Bir isteğin yolculuğu (laptop → Nginx)
 1. Laptopta tarayıcıya `http://10.0.2.x` yazılıyor. OpenVPN'in eklediği route, `10.0.0.0/16` trafiğini tünele yönlendiriyor.
 2. Paket şifrelenip UDP 1194 üzerinden VPN sunucusunun public IP'sine gidiyor (IGW → VPN SG kontrolü).
-3. VPN sunucusu paketi açıyor. IP forwarding ile private subnet'e iletiyor, iletirken MASQUERADE ile kaynak adresi kendi private IP'sine çeviriyor.
+3. VPN sunucusu paketi açıyor. `iptables` FORWARD kuralları hedefin private subnet ve portun 22/80 (ya da ICMP) olduğunu kontrol ediyor. Paket IP forwarding ile private subnet'e iletiliyor, iletirken MASQUERADE ile kaynak adresi VPN sunucusunun private IP'sine çevriliyor.
 4. Uygulama sunucusunun Security Group'u paketin VPN SG'sinden geldiğini görüyor ve 80 numaralı porta izin veriyor.
 5. Nginx cevap veriyor. Cevap aynı yoldan tünele, oradan laptopa dönüyor.
 
@@ -72,15 +72,22 @@ flowchart LR
 6. **OpenVPN root yetkilerini bırakıyor.** `user nobody` / `group nogroup` ayarı sayesinde servis başladıktan sonra yetkisiz kullanıcıya geçiyor.
 7. **Split tunnel.** Tünelden sadece `10.0.0.0/16` trafiği geçiyor. Kullanıcının normal internet trafiği şirkete taşınmıyor.
 8. **SSH anahtarı lokalde üretiliyor.** Private key bilgisayardan hiç çıkmıyor, AWS'ye sadece public key yükleniyor.
-9. **CI/CD anahtarı dar yetkili ve kısa ömürlü tutuluyor.** GitHub Actions bir IAM kullanıcısının access key'iyle giriyor (OIDC bu hesapta SCP ile yasak, aşağıda trade-off'lar bölümüne bak). Anahtar sadece GitHub Secrets'ta duruyor, fork PR'ları secret'lara erişemiyor, workflow sadece `main` branch'inde çalışıyor. Her `destroy`'da anahtar siliniyor, her `apply`'da yenisi üretiliyor.
-10. **En az yetki.** GitHub kullanıcısı sadece bu ECR reposuna push edebiliyor ve sadece uygulama sunucusunda komut çalıştırabiliyor. Anahtar sızsa bile saldırgan başka hiçbir kaynağa dokunamıyor. Uygulama sunucusunun ECR yetkisi sadece okuma.
-11. **SSM ile deploy, port açmadan.** SSM agent NAT üzerinden AWS'ye **dışarıya doğru** bağlanıyor. Deploy için hiçbir gelen port açılmıyor.
-12. **ECR `scan_on_push`.** Her imaj push edildiğinde bilinen açıklar için taranıyor.
-13. **Gizli dosyalar Git'te yok.** `.gitignore` ile state, `.ovpn` ve key dosyaları repodan hariç tutuluyor.
+9. **CI/CD anahtarı dar yetkili.** GitHub Actions bir IAM kullanıcısının access key'iyle giriyor (OIDC bu hesapta SCP ile yasak, aşağıda trade-off'lar bölümüne bak). Anahtar sadece GitHub Secrets'ta (`production` environment'ında) duruyor, fork PR'ları secret'lara erişemiyor, workflow sadece `main` branch'inde çalışıyor. Anahtarın **son kullanma tarihi yok**; sadece `destroy` + `apply` ile siliniyor ve yenisi üretiliyor.
+10. **En az yetki, ama sınırları belli.** GitHub kullanıcısı sadece `case1-app` ECR reposuna push edebiliyor ve sadece uygulama sunucusunda, sadece `case1-deploy-app` SSM dokümanını çalıştırabiliyor. Anahtar sızarsa saldırgan **ECR'a kendi imajını yükleyip bu dokümanla deploy edebilir** (yani uygulama sunucusunda kendi container'ını çalıştırabilir), ama sunucuda keyfi komut çalıştıramaz, başka sunuculara, S3'e ya da IAM'e dokunamaz.
+11. **Özel SSM dokümanı.** `AWS-RunShellScript` yetkisi yok. Deploy dokümanının tek parametresi imaj digest'i ve `^sha256:[a-f0-9]{64}$` ile doğrulanıyor; repo adresi Terraform'dan dokümana gömülü. Dışarıdan gelen hiçbir değer kabuğa serbest metin olarak girmiyor.
+12. **Tag yerine digest ile deploy.** Sunucuya tam olarak pipeline'ın build ettiği imaj gidiyor; tag sonradan başka bir imaja taşınsa bile deploy edilen imaj değişmiyor. Sunucuda bir önceki imaj da tutuluyor (lokal rollback için).
+13. **IMDSv2 zorunlu, hop limit 1 (iki EC2'de de).** Instance metadata'sına sadece makinenin kendisi erişebiliyor. Docker container'ları ve VPN client'ları rolün geçici anahtarlarını alamıyor.
+14. **VPN sunucusunda `iptables` FORWARD kısıtı.** Varsayılan politika DROP. Tünelden sadece private subnet'e TCP 22/80 ve ICMP geçiyor; `169.254.0.0/16` (VPN sunucusunun metadata servisi) açıkça engelli. VPN kullanıcıları VPC'nin geri kalanına ve birbirlerine ulaşamıyor.
+15. **Uygulama sunucusunun ECR yetkisi daraltılmış.** Sadece `case1-app` deposundan imaj çekebiliyor (managed `AmazonEC2ContainerRegistryReadOnly` yerine inline policy).
+16. **SSM ile deploy, port açmadan.** SSM agent NAT üzerinden AWS'ye **dışarıya doğru** bağlanıyor. Deploy için hiçbir gelen port açılmıyor.
+17. **ECR `scan_on_push`.** Her imaj push edildiğinde bilinen açıklar için taranıyor.
+18. **Gizli dosyalar Git'te yok.** `.gitignore` ile state, `.ovpn`, key ve `.tfvars` dosyaları repodan hariç tutuluyor. Provider sürümleri `~>` ile üstten sınırlı, lock dosyası commit'li.
 
 ### Bilerek kabul edilen trade-off'lar
 - **Sertifika private key'leri Terraform state'inde ve EC2 user_data'sında duruyor.** Bu sayede kurulum tamamen otomatik. Üretim ortamında state şifreli bir remote backend'de (S3 + KMS) tutulmalı, sertifikalar da Secrets Manager'dan IAM rolüyle çekilmeli.
-- **CI/CD için kalıcı access key.** İlk tasarım GitHub Actions + OIDC'ydi. Ama bu hesap AWS'nin yeni kayıt deneyimiyle açıldı ve üstündeki değiştirilemeyen SCP `iam:*Provider*` işlemlerini yasaklıyor (`AccessDenied ... explicit deny in a service control policy`). GitHub Actions'ta kalmak için bir IAM kullanıcısının access key'i kullanıldı. Risk dar yetki, kısa ömür (destroy/apply ile yenileniyor) ve secret'ların sadece main branch'inde kullanılmasıyla sınırlandı. OIDC'ye izin veren bir hesapta doğru çözüm OIDC olurdu. Alternatif olarak AWS CodePipeline + CodeBuild de denendi, o yolda kalıcı anahtar hiç gerekmiyor.
+- **CI/CD için kalıcı access key.** İlk tasarım GitHub Actions + OIDC'ydi. Ama bu hesap AWS'nin yeni kayıt deneyimiyle açıldı ve üstündeki değiştirilemeyen SCP `iam:*Provider*` işlemlerini yasaklıyor (`AccessDenied ... explicit deny in a service control policy`). GitHub Actions'ta kalmak için bir IAM kullanıcısının access key'i kullanıldı. Anahtarın son kullanma tarihi yok; sadece `destroy` + `apply` ile yenileniyor. Risk dar yetki (özel SSM dokümanı, tek ECR deposu) ve secret'ların sadece main branch'inden çalışan `production` environment'ında tutulmasıyla sınırlandı. Sızan bir anahtar yine de uygulama sunucusuna saldırganın imajını deploy etmeye yetiyor. OIDC'ye izin veren bir hesapta doğru çözüm OIDC olurdu. Alternatif olarak AWS CodePipeline + CodeBuild de denendi, o yolda kalıcı anahtar hiç gerekmiyor.
+- **IAM kullanıcısında `force_destroy = false`.** Bu ayar `true` olduğunda Terraform destroy sırasında kullanıcının login profile'ını da silmeye çalışıyor ve SCP `iam:*LoginProfile*` işlemlerini yasakladığı için hata veriyor. Access key ayrı bir Terraform kaynağı olduğu için destroy'da zaten siliniyor.
+- **`AmazonSSMManagedInstanceCore` geniş.** SSM agent için gerekli bu managed policy `ssm:GetParameter*` yetkisini `*` üzerinde veriyor. Uygulama sunucusu ele geçirilirse hesaptaki (KMS ile korunmayan) Parameter Store değerleri okunabilir. Şu an Parameter Store kullanılmıyor; kullanılırsa özel bir policy ile daraltılmalı.
 - **Tek AZ, tek NAT, tek VPN sunucusu.** Maliyet için. Yüksek erişilebilirlik gerekirse ikinci bir AZ eklenmeli.
 - Tam liste ve iyileştirme önerileri: [docs/TESTS.md](docs/TESTS.md)
 
@@ -95,12 +102,12 @@ flowchart LR
 │   ├── vpn.tf         # VPN SG + OpenVPN EC2 (user_data ile otomatik kurulum)
 │   ├── private.tf     # NAT, private route table, app SG + app EC2
 │   ├── client.tf      # client1.ovpn dosyasını lokale üretir
-│   └── cicd.tf        # ECR, EC2 IAM rolü, GitHub Actions için dar yetkili IAM kullanıcısı
+│   └── cicd.tf        # ECR, EC2 IAM rolü, deploy SSM dokümanı, GitHub Actions için dar yetkili IAM kullanıcısı
 ├── app/
 │   ├── Dockerfile
 │   └── index.html
 ├── .github/workflows/deploy.yml
-├── scripts/deploy.sh  # SSM ile deploy + sağlık kontrolü
+├── scripts/deploy.sh  # SSM (case1-deploy-app) ile digest deploy + sonucu bekleme
 └── docs/
     ├── architecture.png / architecture.mmd
     ├── CICD.md        # CI/CD kurulum rehberi
@@ -142,7 +149,7 @@ terraform apply
 ## CI/CD
 `app/` klasörüne yapılan her push şu adımları tetikliyor:
 ```
-GitHub Actions → (GitHub Secrets'taki access key) → docker build → ECR push → SSM ile private sunucuda pull + restart + sağlık kontrolü
+GitHub Actions (production environment) → access key → docker build → ECR push → digest → SSM (case1-deploy-app) ile private sunucuda pull + restart + sağlık kontrolü
 ```
 Kurulum adımları: [docs/CICD.md](docs/CICD.md)
 
