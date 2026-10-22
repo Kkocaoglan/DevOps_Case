@@ -13,6 +13,7 @@ VPN_PRIV=$(terraform output -raw vpn_private_ip)
 APP_IP=$(terraform output -raw app_private_ip)
 APP_ID=$(terraform output -raw app_instance_id)
 ```
+Komutlar macOS için yazıldı. macOS'taki `nc`'de bağlantı zaman aşımı `-G` ile verilir (`-w` cevap gelmeyen bağlantıda beklemeyi kesmez); Linux'ta `-G` yerine `-w` kullan.
 
 ---
 
@@ -227,8 +228,8 @@ Her testin bir **beklenen sonucu** var. Sonuç beklenenden farklıysa bir bulgu 
   ```bash
   NAT_IP=$(aws ec2 describe-nat-gateways --filter Name=tag:Name,Values=case1-nat \
     --query "NatGateways[0].NatGatewayAddresses[0].PublicIp" --output text)
-  nc -vz -w 5 $NAT_IP 80
-  nc -vz -w 5 $NAT_IP 22
+  nc -vz -G 5 $NAT_IP 80
+  nc -vz -G 5 $NAT_IP 22
   ```
   Beklenen: İkisi de zaman aşımı. NAT gelen bağlantı kabul etmiyor.
 
@@ -246,9 +247,9 @@ Her testin bir **beklenen sonucu** var. Sonuç beklenenden farklıysa bir bulgu 
 
 - **S5. VPN içinden izin verilmeyen portlar:**
   ```bash
-  nc -vz -w 3 $APP_IP 80     # başarılı olmalı
-  nc -vz -w 3 $APP_IP 8080   # zaman aşımı olmalı (SG izin vermiyor)
-  nc -vz -w 3 $APP_IP 443    # zaman aşımı olmalı
+  nc -vz -G 3 $APP_IP 80     # başarılı olmalı
+  nc -vz -G 3 $APP_IP 8080   # zaman aşımı olmalı (SG izin vermiyor)
+  nc -vz -G 3 $APP_IP 443    # zaman aşımı olmalı
   ```
 
 - **S6. Uygulama sunucusunun public IP'si yok:**
@@ -349,15 +350,17 @@ Her testin bir **beklenen sonucu** var. Sonuç beklenenden farklıysa bir bulgu 
 - **S13. VPN FORWARD kuralları:**
   ```bash
   ssh -i ~/.ssh/case1 ubuntu@$VPN_PRIV "sudo iptables -S FORWARD"
-  nc -vz -w 3 $APP_IP 80          # başarılı olmalı
+  nc -vz -G 3 $APP_IP 80          # başarılı olmalı
   ping -c 2 $APP_IP               # cevap vermeli
   ssh -i ~/.ssh/case1 ubuntu@$VPN_PRIV true && echo "VPN sunucusuna SSH OK"   # INPUT etkilenmemeli
   # İzin verilmeyen hedef: public subnet. DROP politikasının sayacı artmalı.
   ssh -i ~/.ssh/case1 ubuntu@$VPN_PRIV "sudo iptables -L FORWARD -v -n | head -1"
-  nc -vz -w 3 10.0.1.10 80        # zaman aşımı
+  nc -vz -G 3 10.0.1.10 80        # zaman aşımı (macOS'ta bağlantı süresi -G ile sınırlanır, -w yetmez)
   ssh -i ~/.ssh/case1 ubuntu@$VPN_PRIV "sudo iptables -L FORWARD -v -n | head -1"
   ```
   Beklenen: `iptables -S` çıktısında `-P FORWARD DROP`, `169.254.0.0/16 ... DROP` ve sadece private subnet için 22/80/ICMP `ACCEPT` kuralları olmalı. `Chain FORWARD (policy DROP N packets ...)` satırındaki paket sayısı `nc` denemesinden sonra artmalı, yani paket VPN sunucusunda düşürülmüş olmalı. R1'den (reboot) sonra da aynı kurallar gelmeli.
+
+  **Sonuç (2026-10-22):** Kurallar beklendiği gibi (`-P FORWARD DROP`, 169.254/16 DROP, sadece `10.0.2.0/24` için 22/80/ICMP; çıkış arayüzü `ens5`, dinamik bulunuyor). `$APP_IP:80` ve ping başarılı. Public subnet denemesinden sonra DROP politikası sayacı 0 → 10 paket. Geçti.
 
 - **S11. Statik analiz:**
   ```bash
