@@ -333,9 +333,9 @@ Her testin bir **beklenen sonucu** var. Sonuç beklenenden farklıysa bir bulgu 
   ```
   - Beklenen: Listeleme bile `explicit deny in a service control policy` hatası verebilir ya da boş dönebilir. Bu hesapta identity provider kullanılamadığının kanıtı. README'deki tasarım değişikliğinin gerekçesi bu.
 
-- **S12. VPN client'ından VPN sunucusunun IMDS'ine ulaşma (B17'nin kanıtı):** VPN bağlıyken macOS'ta. Önce tünel arayüzünü bul (`10.0/16` route'unun gittiği `utunX`):
+- **S12. VPN client'ından VPN sunucusunun IMDS'ine ulaşma (B17'nin kanıtı):** VPN bağlıyken macOS'ta. Önce tünel arayüzünü bul (macOS `10.0.0.0/16` route'unu `10/16` olarak gösteriyor, son sütun `utunX`):
   ```bash
-  netstat -rn -f inet | grep '^10.0/16'
+  netstat -rn -f inet | grep utun
   sudo route -n add -host 169.254.169.254 -interface utunX
   curl -s -m 5 -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 60" http://169.254.169.254/latest/api/token; echo "exit=$?"
   sudo route -n delete -host 169.254.169.254
@@ -343,6 +343,8 @@ Her testin bir **beklenen sonucu** var. Sonuç beklenenden farklıysa bir bulgu 
   - Beklenen (düzeltmeden sonra): `curl` zaman aşımına uğramalı (`exit=28`), token dönmemeli.
   - Düzeltmeden önce: Bir token dönebiliyordu; o token ile `http://169.254.169.254/latest/user-data` okunup sunucu private key'i alınabiliyordu.
   - Route'u silmeyi unutma.
+
+  **Sonuç (2026-10-22):** `utun6` üzerinden PUT isteği 5 sn'de zaman aşımına uğradı (`exit=28`), token dönmedi. Geçti.
 
 - **S13. VPN FORWARD kuralları:**
   ```bash
