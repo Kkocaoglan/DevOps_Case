@@ -70,3 +70,12 @@ resource "aws_route_table_association" "public" {
   subnet_id      = aws_subnet.public.id
   route_table_id = aws_route_table.public.id
 }
+
+# VPC'nin default security group'u: Terraform'a alınıp bütün kuralları siliniyor
+# (ingress/egress bloğu yok = kural yok). Varsayılan hali "aynı SG'deki her şeye ve
+# dışarıya her yere izin ver" idi; yanlışlıkla bu SG'ye bağlanan bir kaynak hiçbir
+# trafik alamaz/gönderemez. Bizim kaynaklarımız kendi SG'lerini kullanıyor.
+resource "aws_default_security_group" "default" {
+  vpc_id = aws_vpc.main.id
+  tags   = { Name = "case1-default-sg-kullanma" }
+}

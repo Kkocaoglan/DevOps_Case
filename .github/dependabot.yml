@@ -1,0 +1,13 @@
+# Sabitlenmiş action SHA'larını ve Dockerfile'daki base imajı güncel tutar.
+# Güncellemeler PR olarak gelir; main korumalı olduğu için merge edilmeden deploy olmaz.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/app"
+    schedule:
+      interval: "weekly"
