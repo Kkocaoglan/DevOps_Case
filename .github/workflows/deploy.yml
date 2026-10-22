@@ -32,12 +32,15 @@ jobs:
     # branch kuralı sadece main'e izin veriyor (ve istenirse onaycı istiyor).
     environment: production
 
+    # Action'lar tag yerine commit SHA ile sabit: tag sonradan başka bir commit'e
+    # taşınsa bile (ör. action deposu ele geçirilirse) AWS anahtarlarını gören bu job'da
+    # değişmiş kod çalışmaz. Güncellemeleri Dependabot PR olarak açıyor (.github/dependabot.yml).
     steps:
       - name: Kodu çek
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: AWS'ye giriş yap (GitHub Secrets'taki access key ile)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -45,7 +48,7 @@ jobs:
 
       - name: ECR'a login ol
         id: ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
       - name: İmajı build et ve ECR'a push et
         env:
