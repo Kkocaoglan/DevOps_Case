@@ -31,7 +31,7 @@ flowchart LR
 
     gh -- "a - access key<br/>GitHub Secrets" --> iam
     gh -- "b - docker push" --> ecr
-    gh -- "c - send-command" --> ssm
+    gh -- "c - send-command<br/>sadece case1-deploy-app" --> ssm
     ssm -. "d - agent NAT üzerinden<br/>dışarıya bağlanır" .- app
     app -. "e - docker pull" .-> ecr
 
