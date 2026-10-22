@@ -180,10 +180,13 @@ Komutlar macOS için yazıldı. macOS'taki `nc`'de bağlantı zaman aşımı `-G
 - **Sorun:** `nginx:alpine` master süreci container içinde root olarak çalışıyor. Container kaçışı gerektiren bir açıkta etki daha büyük olur.
 - **Çözüm:** `nginxinc/nginx-unprivileged` (8080'i dinler, root değil) kullan, port eşlemesini `-p 80:8080` yap. Ek olarak `--read-only`, `--cap-drop ALL`, `--security-opt no-new-privileges`.
 
-### 🟠 B23: Branch protection ve environment koruması eksikti
+### ✅ B23: Branch protection ve environment koruması eksikti (bu sürümde düzeltildi)
 - **Sorun:** `main`'e doğrudan push ve force-push açıktı. AWS secret'ları repo seviyesindeydi; repo'ya yazma yetkisi olan biri secret'ları okuyan bir workflow ekleyebilirdi.
-- **Kısmen düzeltildi:** Deploy job'u `environment: production`'a bağlandı.
-- **Elle yapılması gereken (GitHub ayarı):** `main` için PR zorunluluğu ve force-push yasağı; `production` environment'ında deployment branch kuralı (sadece `main`), istenirse required reviewer; secret'ların repo secret'tan environment secret'a taşınması. Adımlar: CICD.md, 3. ve 4. adım.
+- **Çözüm (uygulandı):**
+  - Deploy job'u `environment: production`'a bağlandı. Environment'ın deployment branch kuralı sadece `main`; AWS secret'ları environment secret olarak tutuluyor.
+  - `main` için ruleset: PR zorunlu (tek geliştirici olduğu için onay sayısı 0), force-push ve silme engelli.
+- **Kanıt (2026-10-22):** `main`'e direkt `git push` reddedildi: `GH013: Repository rule violations found ... Changes must be made through a pull request.`
+- **Not:** Required reviewer tanımlı değil. Ekip büyürse deploy öncesi onay için `production` environment'ına reviewer eklenmeli.
 
 ### 🟡 B24: GitHub Actions eylemleri tag ile sabitlenmiş
 - **Sorun:** `actions/checkout@v4`, `aws-actions/configure-aws-credentials@v4`, `aws-actions/amazon-ecr-login@v2` tag ile çağrılıyor. Tag'ler taşınabilir; eylemin deposu ele geçirilirse kötü amaçlı kod, AWS anahtarlarına erişimi olan job'da çalışır.
@@ -442,7 +445,7 @@ Her testin bir **beklenen sonucu** var. Sonuç beklenenden farklıysa bir bulgu 
 1. **Hemen ve ucuz:**
    - ~~IMDS hop limit 1 (B4)~~ ✅
    - ~~Özel SSM deploy dokümanı, digest ile deploy (B16)~~ ✅
-   - Branch protection + `production` environment ayarları (B23, GitHub'da elle)
+   - ~~Branch protection + `production` environment ayarları (B23)~~ ✅
    - EBS şifreleme (B5)
    - VPN için Elastic IP (B10)
    - `source_dest_check = true` (B11)
