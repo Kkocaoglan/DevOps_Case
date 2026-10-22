@@ -85,6 +85,16 @@ echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-openvpn.conf
 sysctl --system
 IFACE=$(ip route show default | awk '{print $5}')
 iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o "$IFACE" -j MASQUERADE
+
+# FORWARD: varsayılan DROP. VPN client'ları sadece private subnet'e, sadece
+# SSH/HTTP/ICMP ile gidebilir. 169.254.0.0/16 (bu sunucunun IMDS'i) açıkça kapalı:
+# yoksa client tünele bir route ekleyip user_data'daki sunucu key'ine ulaşabilirdi.
+# INPUT'a dokunulmuyor: tünel içinden VPN sunucusunun kendisine SSH çalışmaya devam eder.
+iptables -P FORWARD DROP
+iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -A FORWARD -i tun0 -d 169.254.0.0/16 -j DROP
+iptables -A FORWARD -i tun0 -o "$IFACE" -d ${aws_subnet.private.cidr_block} -p tcp -m multiport --dports 22,80 -j ACCEPT
+iptables -A FORWARD -i tun0 -o "$IFACE" -d ${aws_subnet.private.cidr_block} -p icmp -j ACCEPT
 netfilter-persistent save
 
 systemctl enable --now openvpn-server@server
